@@ -11,5 +11,11 @@
     "backend"
   ],
   "author": "vedant",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "dependencies": {
+    "D": "^1.0.0"
+  }
 }
