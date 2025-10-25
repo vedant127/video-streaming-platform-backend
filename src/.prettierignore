@@ -1,0 +1,7 @@
+/cursor
+/.node_module
+./dist
+
+*.env
+.env
+.env.*
