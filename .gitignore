@@ -63,3 +63,7 @@ Thumbs.db
 # Build outputs
 dist/
 build/
+.env
+public/.env
+public/temp/*
+!public/temp/.gitkeep

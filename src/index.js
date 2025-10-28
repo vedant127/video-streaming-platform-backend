@@ -2,6 +2,7 @@
 
 import dotenv from "dotenv";
 import connectDB from "./db/index.js";
+import { app } from "./app.js";
 
 
 dotenv.config({
@@ -16,7 +17,15 @@ dotenv.config({
 // Debug: Check if environment variables are loaded
 console.log('MONGODB_URL:', process.env.MONGODB_URL);
 
-connectDB();
+connectDB()
+.then(()=> {
+    app.listen(process.env.PORT || 8000 , () => {
+        console.log(`server is runnig at port : ${process.env.PORT || 8000}`);
+    })
+})
+.catch((err) => {
+    console.log("MONGODB connection failed !!!" , err);
+})
 
 
 
