@@ -11,23 +11,55 @@ cloudinary.config({
 
 const uploadOnCloudinary = async (LocalFilePath) => {
     try {
-        if (!LocalFilePath) return null;
-        // upload the file on cloudinary
+        if (!LocalFilePath) {
+            console.error('Cloudinary: No local file path provided');
+            return null;
+        }
+
+        // Check if file exists
+        if (!fs.existsSync(LocalFilePath)) {
+            console.error('Cloudinary: Local file does not exist:', LocalFilePath);
+            return null;
+        }
+
+        // Check Cloudinary configuration
+        if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+            console.error('Cloudinary: Missing environment variables. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET');
+            return null;
+        }
+
+        // Upload the file on cloudinary
         const response = await cloudinary.uploader.upload(LocalFilePath, {
             resource_type: 'auto',
         });
-        // .log('File isconsole uploaded on Cloudinary:', response.url);
-        fs.unlink(LocalFilePath);
+
+        if (!response || !response.url) {
+            console.error('Cloudinary: Upload succeeded but no URL in response');
+            return null;
+        }
+
+        // Remove the locally saved temporary file after successful upload
+        try {
+            if (fs.existsSync(LocalFilePath)) {
+                fs.unlinkSync(LocalFilePath);
+            }
+        } catch (fsErr) {
+            console.error('Cloudinary: Failed to remove local file after upload:', fsErr);
+        }
+
+        console.log('Cloudinary: File uploaded successfully:', response.url);
         return response;
     } catch (error) {
-        console.error('Cloudinary upload error:', error);
-        // remove the locally saved temporary file as the upload operation got failed
+        console.error('Cloudinary upload error:', error.message || error);
+        console.error('Full error:', error);
+        
+        // Remove the locally saved temporary file as the upload operation failed
         try {
             if (LocalFilePath && fs.existsSync(LocalFilePath)) {
                 fs.unlinkSync(LocalFilePath);
             }
         } catch (fsErr) {
-            console.error('Failed to remove local file after Cloudinary upload error:', fsErr);
+            console.error('Cloudinary: Failed to remove local file after error:', fsErr);
         }
         return null;
     }

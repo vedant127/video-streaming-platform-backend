@@ -92,12 +92,10 @@ userSchema.methods.genrateAccessToken = function(){
         {
             expiresIn: process.env.ACCESS_TOKEN_EXPIRY,
         }
-
     )
-
 }
 
-userSchema.methods.genrateAccessToken = function(){
+userSchema.methods.genrateRefreshToken = function(){
     return jwt.sign(
         {
             _id: this._id,
@@ -106,13 +104,8 @@ userSchema.methods.genrateAccessToken = function(){
         {
             expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
         }
-
     )
-    
 }
-
-
-userSchema.methods.genrateRefreshToken = function(){}
 
 export const user = mongoose.model("user" , userSchema)
 
