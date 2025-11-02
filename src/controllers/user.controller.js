@@ -1,9 +1,10 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
-import { user } from "../models/user.model.js";
+import { user, user } from "../models/user.model.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 
 
 const registerUser = asyncHandler(async (req, res) => {
@@ -479,6 +480,56 @@ const getUserChannelProfile = asyncHandler(async(req , res) => {
 
 })
 
+    
+   const getWatchHistory = asyncHandler(async(req , res) => {
+       const user = await user.aggregate([
+        {
+          $match: {
+            _id: new mongoose.Types.ObjectId(req.user._id)
+          }
+        }, 
+        {
+          $lookup: {
+            from: "videos",
+            localField: "watchHistory",
+            foreignField: _id,
+            as: "watchHistory",
+            pipline: [
+              {
+                $lookup: {
+                  from: "users",
+                  localField: "owner",
+                  foreignField: _id,
+                  as: "owner",
+                  pipline: [
+                    {
+                      $project: {
+                        fullname: 1,
+                        username: 1,
+                        avatar: 1
+                      }
+                    },
+                     {
+                      $addFields: {
+                        owner:{
+                          $first: "$owner"
+                        }
+                      }
+                     }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+       ])
+   
+         return res
+         .status(200)
+         .json(new ApiResponse(200 , user[0].watchHistory, "watchHisotry fetched succesfully" ))
+
+   })
+
 export { 
   registerUser ,
   loginUser ,
@@ -489,5 +540,6 @@ export {
   updateAccountDetails,
   updateUseravatar,
   updateUserCoverImage,
-  getUserChannelProfile
+  getUserChannelProfile,
+  getWatchHistory
 }  
