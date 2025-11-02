@@ -18,10 +18,9 @@ const connectDB = async () => {
   try {
     const mongoUrl = process.env.MONGODB_URL || "mongodb://localhost:27017";
     const uri = buildMongoUri(mongoUrl);
-    console.log("Attempting to connect with URL:", uri);
 
-    const connectioninstance = await mongoose.connect(uri);
-    console.log(`\n mongodb connected !! DB HOST: ${connectioninstance.connection.host}`);
+    await mongoose.connect(uri);
+    console.log("mongodb connected");
   } catch (error) {
     console.log("MONGODB connection error", error);
     process.exit(1);

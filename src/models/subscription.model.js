@@ -16,3 +16,5 @@ const subscriptionSchema = new Schema({
 
 
 export const subscription = mongosse.model("subscription" , subscriptionSchema )
+
+
