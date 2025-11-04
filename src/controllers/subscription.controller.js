@@ -8,7 +8,7 @@ import {asyncHandler} from "../utils/asyncHandler.js"
 
 const toggleSubscription = asyncHandler(async (req, res) => {
     const {channelId} = req.params
-    // TODO: toggle subscription
+   
     if (!isValidObjectId(channelId)) {
         throw new ApiError(400, "Invalid channel id")
     }
@@ -39,7 +39,7 @@ const toggleSubscription = asyncHandler(async (req, res) => {
         .json(new ApiResponse(201, { subscribed: true, _id: created._id }, "Subscribed successfully"))
 })
 
-// controller to return subscriber list of a channel
+
 const getUserChannelSubscribers = asyncHandler(async (req, res) => {
     const {channelId} = req.params
     if (!isValidObjectId(channelId)) {
@@ -81,7 +81,7 @@ const getUserChannelSubscribers = asyncHandler(async (req, res) => {
         .json(new ApiResponse(200, result, "Subscribers fetched successfully"))
 })
 
-// controller to return channel list to which user has subscribed
+
 const getSubscribedChannels = asyncHandler(async (req, res) => {
     const { subscriberId } = req.params
     if (!isValidObjectId(subscriberId)) {
