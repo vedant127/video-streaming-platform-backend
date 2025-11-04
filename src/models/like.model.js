@@ -1,6 +1,6 @@
 import mongoose , {Schema} from "mongoose";
-import { video } from "./video.model";
-import { comment } from "./comment.model";
+import { Video } from "./video.model.js";
+import { Comment } from "./comment.model.js";
 
 const likeschema = new Schema ({
     
@@ -31,4 +31,4 @@ const likeschema = new Schema ({
 })
 
 
-export const like = mongoose.model("like" , likeschema)
+export const Like = mongoose.model("like" , likeschema)
