@@ -220,8 +220,7 @@ const getVideoManifest = asyncHandler(async (req, res) => {
                         as: "variant",
                         cond: {
                             $and: [
-                                { $eq: ["$$variant.container", requestedFormat] },
-                                { $eq: ["$$variant.status", "ready"] }
+                                { $eq: ["$$variant.container", requestedFormat] }
                             ]
                         }
                     }
@@ -231,40 +230,95 @@ const getVideoManifest = asyncHandler(async (req, res) => {
     ])
 
     if (!manifestData.length) {
-        throw new ApiError(404, "Video manifest not found")
+        throw new ApiError(404, "Video not found or not published")
     }
 
     const video = manifestData[0]
+    const readyVariants = video.variants?.filter((v) => v.status === "ready") || []
     const manifestMeta =
         requestedFormat === "hls"
             ? video.playback?.manifests?.hls
             : video.playback?.manifests?.dash
 
-    if (!manifestMeta?.path) {
-        throw new ApiError(409, "Manifest not published yet")
-    }
-
     const playbackBaseUrl =
         video.storage?.cdnPlaybackBaseUrl || process.env.CDN_PLAYBACK_BASE_URL || ""
 
-    return res.status(200).json(
-        new ApiResponse(
-            200,
-            {
-                format: requestedFormat,
-                masterManifest: {
-                    path: manifestMeta.path,
-                    version: manifestMeta.version,
-                    url: playbackBaseUrl
-                        ? `${playbackBaseUrl}/${manifestMeta.path}`
-                        : manifestMeta.path
+    // If manifest path exists, return it
+    if (manifestMeta?.path) {
+        return res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    format: requestedFormat,
+                    masterManifest: {
+                        path: manifestMeta.path,
+                        version: manifestMeta.version || 0,
+                        url: playbackBaseUrl
+                            ? `${playbackBaseUrl}/${manifestMeta.path}`
+                            : manifestMeta.path
+                    },
+                    variants: readyVariants,
+                    playbackBaseUrl,
+                    encodingStatus: "completed"
                 },
-                variants: video.variants,
-                playbackBaseUrl
-            },
-            "Manifest fetched successfully"
+                "Manifest fetched successfully"
+            )
         )
-    )
+    }
+
+    // If no manifest path but variants exist, check encoding status
+    if (video.variants && video.variants.length > 0) {
+        const encodingJob = await EncodingJob.findOne({
+            video: new mongoose.Types.ObjectId(videoId)
+        }).sort({ createdAt: -1 })
+
+        const encodingStatus = encodingJob?.status || "unknown"
+        const hasReadyVariants = readyVariants.length > 0
+
+        if (hasReadyVariants) {
+            // Generate default manifest path if variants are ready but manifest not set
+            const defaultManifestPath = `videos/${videoId}/master.${requestedFormat === "hls" ? "m3u8" : "mpd"}`
+            
+            return res.status(200).json(
+                new ApiResponse(
+                    200,
+                    {
+                        format: requestedFormat,
+                        masterManifest: {
+                            path: defaultManifestPath,
+                            version: 0,
+                            url: playbackBaseUrl
+                                ? `${playbackBaseUrl}/${defaultManifestPath}`
+                                : defaultManifestPath
+                        },
+                        variants: readyVariants,
+                        playbackBaseUrl,
+                        encodingStatus: "ready",
+                        warning: "Manifest path not set by encoding worker. Using default path."
+                    },
+                    "Manifest fetched successfully (using default path)"
+                )
+            )
+        }
+
+        // Variants exist but not ready yet
+        return res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    format: requestedFormat,
+                    variants: video.variants,
+                    encodingStatus,
+                    progressPercent: encodingJob?.progressPercent || 0,
+                    message: "Video is still being encoded. Variants will be available once encoding completes."
+                },
+                "Video encoding in progress"
+            )
+        )
+    }
+
+    // No variants at all
+    throw new ApiError(409, "Video encoding not started. Please wait for encoding job to be created.")
 })
 
 const getSegmentSignedUrl = asyncHandler(async (req, res) => {
@@ -280,18 +334,63 @@ const getSegmentSignedUrl = asyncHandler(async (req, res) => {
     ).lean()
 
     if (!video) {
-        throw new ApiError(404, "Video not found")
+        throw new ApiError(404, "Video not found or not published")
     }
 
-    const variant = video.variants?.find(
+    if (!video.variants || video.variants.length === 0) {
+        throw new ApiError(404, "No variants found for this video")
+    }
+
+    const variant = video.variants.find(
         (item) =>
             item.label === variantLabel ||
-            item.profile === variantLabel
+            item.profile === variantLabel ||
+            item.label === `${variantLabel}-hls` ||
+            item.label === `${variantLabel}-dash`
     )
 
-    if (!variant || variant.status !== "ready") {
-        throw new ApiError(404, "Variant not available")
+    if (!variant) {
+        const availableVariants = video.variants.map((v) => v.label).join(", ")
+        throw new ApiError(
+            404,
+            `Variant "${variantLabel}" not found. Available variants: ${availableVariants}`
+        )
     }
+
+    if (variant.status !== "ready") {
+        const encodingJob = await EncodingJob.findOne({
+            video: new mongoose.Types.ObjectId(videoId)
+        })
+            .sort({ createdAt: -1 })
+            .lean()
+
+        return res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    variant: variant.label,
+                    status: variant.status,
+                    encodingStatus: encodingJob?.status || "unknown",
+                    progressPercent: encodingJob?.progressPercent || 0,
+                    message: `Variant "${variant.label}" is not ready yet. Encoding status: ${encodingJob?.status || "unknown"}. Please wait for encoding to complete.`,
+                    availableVariants: video.variants
+                        .filter((v) => v.status === "ready")
+                        .map((v) => v.label),
+                    segmentName: segmentName || "N/A"
+                },
+                "Variant encoding in progress"
+            )
+        )
+    }
+
+    // Validate segment name format
+    if (!segmentName || segmentName.trim() === "") {
+        throw new ApiError(400, "Segment name is required")
+    }
+
+    // Build segment path
+    const segmentsPath = variant.segmentsPath || `videos/${videoId}/${variant.container}/${variant.profile}/`
+    const segmentPath = `${segmentsPath}${segmentName}`
 
     const playbackBaseUrl =
         variant.storage?.cdnBaseUrl ||
@@ -299,12 +398,23 @@ const getSegmentSignedUrl = asyncHandler(async (req, res) => {
         process.env.CDN_PLAYBACK_BASE_URL ||
         ""
 
-    const segmentPath = `${variant.segmentsPath}${segmentName}`
-    const segmentUrl = playbackBaseUrl ? `${playbackBaseUrl}/${segmentPath}` : segmentPath
+    const segmentUrl = playbackBaseUrl
+        ? `${playbackBaseUrl}/${segmentPath}`.replace(/\/+/g, "/")
+        : segmentPath
 
-    return res
-        .status(200)
-        .json(new ApiResponse(200, { variant: variant.label, segmentUrl }, "Segment URL issued"))
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                variant: variant.label,
+                segmentName,
+                segmentPath,
+                segmentUrl,
+                playbackBaseUrl: playbackBaseUrl || "Not configured"
+            },
+            "Segment URL issued successfully"
+        )
+    )
 })
 
 const updateVideo = asyncHandler(async (req, res) => {
@@ -565,8 +675,17 @@ const getVideoMetrics = asyncHandler(async (req, res) => {
 
 const handleEncodingCallback = asyncHandler(async (req, res) => {
     const { jobId } = req.params
-    const { status, progressPercent, workerNode, variants = [], masterManifests = {}, error } =
-        req.body
+    
+    // Handle undefined req.body
+    const body = req.body || {}
+    const {
+        status,
+        progressPercent,
+        workerNode,
+        variants = [],
+        masterManifests = {},
+        error
+    } = body
 
     if (!isValidObjectId(jobId)) {
         throw new ApiError(400, "Invalid job id")
@@ -577,15 +696,19 @@ const handleEncodingCallback = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Encoding job not found")
     }
 
-    job.status = status || job.status
+    // Update job status
+    if (status) {
+        job.status = status
+    }
     if (typeof progressPercent === "number") {
-        job.progressPercent = progressPercent
+        job.progressPercent = Math.max(0, Math.min(100, progressPercent))
     }
     if (workerNode) {
         job.workerNode = workerNode
     }
     if (error) {
         job.error = error
+        job.status = "failed"
     }
     if (masterManifests && Object.keys(masterManifests).length) {
         job.masterManifests = masterManifests
@@ -593,7 +716,8 @@ const handleEncodingCallback = asyncHandler(async (req, res) => {
     job.lastHeartbeatAt = new Date()
     await job.save()
 
-    if (status === "completed" && variants.length) {
+    // If encoding completed, update video variants
+    if (status === "completed" && Array.isArray(variants) && variants.length > 0) {
         const bulkOps = variants.map((variant) => ({
             updateOne: {
                 filter: {
@@ -603,9 +727,9 @@ const handleEncodingCallback = asyncHandler(async (req, res) => {
                 update: {
                     $set: {
                         "variants.$.status": "ready",
-                        "variants.$.manifestPath": variant.manifestPath,
-                        "variants.$.segmentsPath": variant.segmentsPath,
-                        "variants.$.storage": variant.storage,
+                        "variants.$.manifestPath": variant.manifestPath || "",
+                        "variants.$.segmentsPath": variant.segmentsPath || "",
+                        "variants.$.storage": variant.storage || {},
                         "variants.$.avgBitrateKbps":
                             Number(variant.avgBitrateKbps || variant.bandwidthKbps || 0),
                         "variants.$.lastPublishedAt": new Date()
@@ -618,6 +742,7 @@ const handleEncodingCallback = asyncHandler(async (req, res) => {
             await Video.bulkWrite(bulkOps)
         }
 
+        // Update master manifests
         if (masterManifests && Object.keys(masterManifests).length) {
             await Video.updateOne(
                 { _id: job.video },
@@ -631,7 +756,54 @@ const handleEncodingCallback = asyncHandler(async (req, res) => {
         }
     }
 
-    return res.status(200).json(new ApiResponse(200, { jobId }, "Encoding job updated"))
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                jobId,
+                status: job.status,
+                progressPercent: job.progressPercent,
+                videoId: job.video,
+                message: status === "completed" ? "Encoding completed and variants updated" : "Encoding job updated"
+            },
+            "Encoding job updated successfully"
+        )
+    )
+})
+
+const getEncodingJobByVideo = asyncHandler(async (req, res) => {
+    const { videoId } = req.params
+
+    if (!isValidObjectId(videoId)) {
+        throw new ApiError(400, "Invalid video id")
+    }
+
+    const job = await EncodingJob.findOne({
+        video: new mongoose.Types.ObjectId(videoId)
+    })
+        .sort({ createdAt: -1 })
+        .lean()
+
+    if (!job) {
+        throw new ApiError(404, "Encoding job not found for this video")
+    }
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                jobId: job._id,
+                videoId: job.video,
+                status: job.status,
+                progressPercent: job.progressPercent || 0,
+                workerNode: job.workerNode,
+                variantsRequested: job.variantsRequested?.length || 0,
+                createdAt: job.createdAt,
+                updatedAt: job.updatedAt
+            },
+            "Encoding job fetched successfully"
+        )
+    )
 })
 
 export {
@@ -645,5 +817,6 @@ export {
     togglePublishStatus,
     recordVideoMetrics,
     getVideoMetrics,
-    handleEncodingCallback
+    handleEncodingCallback,
+    getEncodingJobByVideo
 }
